@@ -92,12 +92,11 @@ public static class BinaryExtensions
         if (end > bytes.Length) end = bytes.Length;
         for (int b = offset; b < end; b++)
         {
-            sb.Append($"0x{bytes[b]:X2}, ");
+            if (b>offset) sb.Append(", ");
+            sb.Append($"0x{bytes[b]:X2}");
         }
             
         sb.Append("};");
-        sb.AppendLine();
-            
         return sb.ToString();
     }
 
@@ -143,7 +142,7 @@ public static class BinaryExtensions
         if (end > bytes.Length) end = bytes.Length;
         while (idx < end)
         {
-            sb.AppendLine();
+            sb.Append("\r\n");
             sb.Append($"{idx:d4}: ");
             for (int b = 0; (b < 16) && (idx < bytes.Length); b++)
             {
@@ -151,7 +150,7 @@ public static class BinaryExtensions
             }
         }
 
-        sb.AppendLine();
+        sb.Append("\r\n");
         return sb.ToString();
     }
 
