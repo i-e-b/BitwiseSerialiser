@@ -88,4 +88,27 @@ public class ExtensionTests
             "0010: 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A \r\n" +
             "0026: 1B 1C 1D 1E 1F 20 FF FF FF 00 \r\n"), "subset");
     }
+
+    [Test]
+    public void to_and_from_hex_strings()
+    {
+        var original = new byte[] {
+            1,2,4,8,16,32,64,128,255,127,63,31,15,7,3,1,0
+        };
+        
+        var hexStr = original.ToHexString();
+        Assert.That(hexStr, Is.EqualTo("0102040810204080ff7f3f1f0f07030100"));
+        
+        var result = hexStr.ParseBytes();
+        Assert.That(result, Is.EqualTo(original).AsCollection);
+    }
+
+    [Test]
+    public void byte_to_bin_string()
+    {
+        Assert.That(((byte)0x80).ToBinString(), Is.EqualTo("10000000"));
+        Assert.That(((byte)0x7f).ToBinString(), Is.EqualTo("01111111"));
+        Assert.That(((byte)0xAA).ToBinString(), Is.EqualTo("10101010"));
+        Assert.That(((byte)0x55).ToBinString(), Is.EqualTo("01010101"));
+    }
 }

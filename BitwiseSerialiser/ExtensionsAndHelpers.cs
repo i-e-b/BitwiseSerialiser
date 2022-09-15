@@ -210,7 +210,7 @@ public static class BinaryExtensions
     /// </summary>
     /// <param name="data"></param>
     /// <returns></returns>
-    public static string HexString(this byte[]? data)
+    public static string ToHexString(this byte[]? data)
     {
         if (data is null) return "";
         return string.Join("", data.Select(b=>b.ToString("x2")));
@@ -219,7 +219,7 @@ public static class BinaryExtensions
     /// <summary>
     /// Write a byte as an 8 character binary string
     /// </summary>
-    public static string BinString(this byte b) => Convert.ToString(b, 2).PadLeft(8, '0');
+    public static string ToBinString(this byte b) => Convert.ToString(b, 2).PadLeft(8, '0');
 }
 
 
