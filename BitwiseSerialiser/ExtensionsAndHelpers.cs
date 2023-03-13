@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 
 namespace BitwiseSerialiser;
@@ -228,6 +229,7 @@ public static class BinaryExtensions
 /// </summary>
 internal class WeakCache<TK, TV> where TK : notnull
 {
+    private readonly object _lock = new();
     private readonly Func<TK, TV> _generator;
     private readonly Dictionary<TK, TV> _cache = new();
 
@@ -238,18 +240,21 @@ internal class WeakCache<TK, TV> where TK : notnull
 
     public TV Get(TK key)
     {
-        if (_cache.ContainsKey(key)) return _cache[key];
-        var value = _generator(key);
-        try
+        lock (_lock)
         {
-            _cache.Add(key, value);
-        }
-        catch
-        {
-            // ignore
-        }
+            if (_cache.ContainsKey(key)) return _cache[key];
+            var value = _generator(key);
+            try
+            {
+                _cache.Add(key, value);
+            }
+            catch
+            {
+                // ignore
+            }
 
-        return value;
+            return value;
+        }
     }
 }
 
