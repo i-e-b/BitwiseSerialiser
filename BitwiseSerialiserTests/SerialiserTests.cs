@@ -12,7 +12,7 @@ public class SerialiserTests
     public void round_trip_of_simple_structure()
     {
         //                        [ fixed ]  [ big endian ]    [ little end ]   [ fixed ]
-        var expected = new byte[]{0x7F,0x80, 0x12,0x34,0x56,   0x67,0x45,0x23,  0xAA,0x55};
+        var expected = new byte[]{0x7F,0x80, 0x12,0x34,0x56,   0x67,0x45,0x23,  0x55,0xAA};
         
         var src = new SimpleByteStructure{
             ThreeBytesBig = 0x123456,
@@ -172,9 +172,13 @@ EndMarker: 0x55AA (21930)
     [Test]
     public void can_have_repeat_byte_layouts_with_variable_repeat_count_nested_inside_parents()
     {
-        var expected = new byte[] { 0x55, 0x49, 0xFF, 0x48, 0xAA };
+        var expected = new byte[] { 0x55, 0x00, 0x03, 0x7F, 0x80, 0x00, 0x01, 0xC8, 
+            0x7B, 0x00, 0x00, 0x55, 0xAA, 0x7F, 0x80, 0x00, 0x00, 0x7B, 0x15, 0x03,
+            0x00, 0x55, 0xAA, 0x7F, 0x80, 0x00, 0x03, 0x15, 0xC8, 0x01, 0x00, 0x55, 0xAA, 0xAA
+        };
         
         var src = new ParentWithVariableRepeatChild{
+            HowMany = 3,
             ChildStruct = new SimpleByteStructure[]
             {
                 new()
@@ -202,9 +206,6 @@ EndMarker: 0x55AA (21930)
         
         var ok = ByteSerialiser.FromBytes<ParentWithVariableRepeatChild>(actual, out var dst);
         
-        var prefix = new byte[]{0x7F, 0x80};
-        var postfix = new byte[]{0xAA, 0x55};
-        
         Assert.That(ok, Is.True);
         Assert.That(dst.StartMarker[0], Is.EqualTo(0x55), "0");
         Assert.That(dst.EndMarker[0], Is.EqualTo(0xAA), "1");
@@ -212,18 +213,18 @@ EndMarker: 0x55AA (21930)
         
         Assert.That(dst.ChildStruct[0].ThreeBytesSmall, Is.EqualTo(src.ChildStruct[0].ThreeBytesSmall), "3a");
         Assert.That(dst.ChildStruct[0].ThreeBytesBig, Is.EqualTo(src.ChildStruct[0].ThreeBytesBig), "4a");
-        Assert.That(dst.ChildStruct[0].StartMarker, Is.EqualTo(prefix).AsCollection, "5a");
-        Assert.That(dst.ChildStruct[0].EndMarker, Is.EqualTo(postfix).AsCollection, "6a");
+        Assert.That(dst.ChildStruct[0].StartMarker, Is.EqualTo(0x7F80), "5a");
+        Assert.That(dst.ChildStruct[0].EndMarker, Is.EqualTo(0xAA55), "6a");
         
         Assert.That(dst.ChildStruct[1].ThreeBytesSmall, Is.EqualTo(src.ChildStruct[1].ThreeBytesSmall), "3b");
         Assert.That(dst.ChildStruct[1].ThreeBytesBig, Is.EqualTo(src.ChildStruct[1].ThreeBytesBig), "4b");
-        Assert.That(dst.ChildStruct[1].StartMarker, Is.EqualTo(prefix).AsCollection, "5b");
-        Assert.That(dst.ChildStruct[1].EndMarker, Is.EqualTo(postfix).AsCollection, "6b");
+        Assert.That(dst.ChildStruct[1].StartMarker, Is.EqualTo(0x7F80), "5b");
+        Assert.That(dst.ChildStruct[1].EndMarker, Is.EqualTo(0xAA55), "6b");
         
         Assert.That(dst.ChildStruct[2].ThreeBytesSmall, Is.EqualTo(src.ChildStruct[2].ThreeBytesSmall), "3c");
         Assert.That(dst.ChildStruct[2].ThreeBytesBig, Is.EqualTo(src.ChildStruct[2].ThreeBytesBig), "4c");
-        Assert.That(dst.ChildStruct[2].StartMarker, Is.EqualTo(prefix).AsCollection, "5c");
-        Assert.That(dst.ChildStruct[2].EndMarker, Is.EqualTo(postfix).AsCollection, "6c");
+        Assert.That(dst.ChildStruct[2].StartMarker, Is.EqualTo(0x7F80), "5c");
+        Assert.That(dst.ChildStruct[2].EndMarker, Is.EqualTo(0xAA55), "6c");
     }
 
     private static string FixNewLines(string result) => result.Replace("\r", "");
@@ -233,7 +234,7 @@ EndMarker: 0x55AA (21930)
 [SuppressMessage("ReSharper", "UnassignedField.Global")]
 public class SimpleByteStructure
 {
-    [BigEndian(bytes: 2, order: 0)] [FixedValue(0x7F, 0x80)] // fixed value is in output order -- little-endian / big-endian doesn't affect OUTPUT ordering
+    [BigEndian(bytes: 2, order: 0)] [FixedValue(0x7F, 0x80)]
     public UInt16 StartMarker;
     
     [BigEndian(bytes: 3, order: 1)]
@@ -242,7 +243,7 @@ public class SimpleByteStructure
     [LittleEndian(bytes: 3, order: 2)]
     public UInt32 ThreeBytesSmall;
     
-    [LittleEndian(bytes: 2, order: 3)] [FixedValue(0xAA, 0x55)] // fixed value is in output order -- little-endian / big-endian doesn't affect OUTPUT ordering
+    [LittleEndian(bytes: 2, order: 3)] [FixedValue(0xAA, 0x55)]
     public UInt16 EndMarker;
 }
 

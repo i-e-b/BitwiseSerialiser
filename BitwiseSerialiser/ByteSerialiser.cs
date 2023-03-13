@@ -99,15 +99,17 @@ public static class ByteSerialiser
             // Check we have a matching field definition
             if (IsBigEnd(field, out byteCount)) {
                 if (bytes.Length != byteCount) throw new Exception($"Mismatch between {nameof(BigEndianAttribute)} and {nameof(FixedValueAttribute)} definition in {field.DeclaringType?.Name}.{field.Name}");
+                for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             } else if (IsLittleEnd(field, out byteCount)) {
                 if (bytes.Length != byteCount) throw new Exception($"Mismatch between {nameof(LittleEndianAttribute)} and {nameof(FixedValueAttribute)} definition in {field.DeclaringType?.Name}.{field.Name}");
+                for (int i = bytes.Length-1; i >= 0; i--) output.Add(bytes[i]);
             } else if (IsByteString(field, out byteCount)) {
                 if (bytes.Length != byteCount) throw new Exception($"Mismatch between {nameof(ByteStringAttribute)} and {nameof(FixedValueAttribute)} definition in {field.DeclaringType?.Name}.{field.Name}");
+                for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             } else {
                 if (bytes.Length != byteCount) throw new Exception($"Field {field.DeclaringType?.Name}.{field.Name} with {nameof(FixedValueAttribute)} must also have one of {nameof(BigEndianAttribute)}, {nameof(LittleEndianAttribute)}, {nameof(ByteStringAttribute)}");
+                for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             }
-            
-            for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             return;
         }
 
@@ -150,9 +152,13 @@ public static class ByteSerialiser
             return;
         }
             
-        if (IsVariableByteString(field, out _)) // We don't use the calc func during serialisation, just write all bytes
+        if (IsVariableByteString(field, out var variableLengthName)) // We check the declared length against actual
         {
             var byteValues = GetValueAsByteArray(source, field);
+            
+            var expectedLength = GetLengthFromNamedFunction(field, source, variableLengthName);
+            if (byteValues.Length != expectedLength) throw new Exception($"Variable byte string declares {expectedLength} bytes, but {byteValues.Length} bytes were supplied");
+            
             for (var i = 0; i < byteValues.Length; i++)
             {
                 output.Add(byteValues[i]);
@@ -187,9 +193,19 @@ public static class ByteSerialiser
                     SerialiseObjectRecursive(child, output);
                 }
             }
-            else if (IsVariableRepeaterChildType(field, out var repeatName))
+            else if (IsVariableRepeaterChildType(field, out var repeatName)) // We check the declared length against actual
             {
-                throw new Exception("not implemented");
+                if (repeatName is null) throw new Exception($"{field.DeclaringType?.Name}.{field.Name} has an invalid function name");
+                var expectedRepeatCount = GetLengthFromNamedFunction(field, source, repeatName);
+                
+                var childSrc = ListOf(field.GetValue(source) as IEnumerable);
+                if (childSrc is null) throw new Exception($"{field.DeclaringType?.Name}.{field.Name} should be an enumerable type, but was not");
+                if (childSrc.Count != expectedRepeatCount) throw new Exception($"{field.DeclaringType?.Name}.{field.Name} declared {expectedRepeatCount} items, but has {childSrc.Count}");
+                
+                foreach (var child in childSrc)
+                {
+                    SerialiseObjectRecursive(child, output);
+                }
             }
             else // assume it's a recursive type
             {
@@ -309,16 +325,8 @@ public static class ByteSerialiser
             
         if (IsVariableByteString(field, out var functionName))
         {
-            // Try to find public instance method by name, and check it's valid
-            var method = field.DeclaringType?.GetMethod(functionName, BindingFlags.Public | BindingFlags.Instance);
-            if (method is null) throw new Exception($"No such calculation function '{functionName}' in type {field.DeclaringType?.Name}, as declared by its field {field.Name}");
-            var methodParams = method.GetParameters();
-            if (methodParams.Length > 0) throw new Exception($"Invalid calculator function: {field.DeclaringType?.Name}.{functionName}({string.Join(", ",methodParams.Select(p=>p.Name))}); Calculator functions should have no parameters");
-            if (method.ReturnType != typeof(int)) throw new Exception($"Calculator function {field.DeclaringType?.Name}.{functionName}() returns {method.ReturnType.Name}, but should return 'int'");
+            byteCount = GetLengthFromNamedFunction(field, output, functionName);
 
-            // Call the function to get length
-            byteCount = (method.Invoke(output, null!) as int?) ?? throw new Exception($"Calculator function {field.DeclaringType?.Name}.{functionName}() returned an unexpected value");
-                
             // go fetch bytes
             byte[] byteValues;
             if (byteCount < 1 || byteCount > VariableByteStringSafetyLimit)
@@ -373,11 +381,29 @@ public static class ByteSerialiser
                     target.SetValue(child,i);
                 }
                 field.SetValue(output, target);
-                return;
             }
             else if (IsVariableRepeaterChildType(field, out var repeatFunctionName))
             {
-                throw new Exception($"not yet implemented");
+                if (repeatFunctionName is null) throw new Exception($"{field.DeclaringType?.Name}.{field.Name} has an invalid function name");
+                if (!field.FieldType.IsArray) throw new Exception($"Repeater {field.DeclaringType?.Name}.{field.Name} should be an array type");
+                
+                var coreType = field.FieldType.GetElementType();
+                if (coreType is null) throw new Exception($"Could not determine type of repeater {field.DeclaringType?.Name}.{field.Name}. Try declaring as an array");
+                    
+                var declaredCount = GetLengthFromNamedFunction(field, output, repeatFunctionName);
+                
+                var target = Array.CreateInstance(coreType, declaredCount);
+
+                for (int i = 0; i < declaredCount; i++)
+                {
+                    var child = field.GetValue(output)
+                                ?? Activator.CreateInstance(coreType)
+                                ?? throw new Exception($"Failed to find or create instance of {field.DeclaringType?.Name}.{field.Name}");
+
+                    RestoreObjectRecursive(feed, child);
+                    target.SetValue(child,i);
+                }
+                field.SetValue(output, target);
             }
             else
             {
@@ -393,6 +419,19 @@ public static class ByteSerialiser
         }
         
         throw new Exception($"Did not find a valid way of handling {field.DeclaringType?.Name}.{field.Name}");
+    }
+
+    private static int GetLengthFromNamedFunction(FieldInfo field, object sourceObject, string functionName)
+    {
+        // Try to find public instance method by name, and check it's valid
+        var method = field.DeclaringType?.GetMethod(functionName, BindingFlags.Public | BindingFlags.Instance);
+        if (method is null) throw new Exception($"No such calculation function '{functionName}' in type {field.DeclaringType?.Name}, as declared by its field {field.Name}");
+        var methodParams = method.GetParameters();
+        if (methodParams.Length > 0) throw new Exception($"Invalid calculator function: {field.DeclaringType?.Name}.{functionName}({string.Join(", ", methodParams.Select(p => p.Name))}); Calculator functions should have no parameters");
+        if (method.ReturnType != typeof(int)) throw new Exception($"Calculator function {field.DeclaringType?.Name}.{functionName}() returns {method.ReturnType.Name}, but should return 'int'");
+
+        // Call the function to get length
+        return (method.Invoke(sourceObject, null!) as int?) ?? throw new Exception($"Calculator function {field.DeclaringType?.Name}.{functionName}() returned an unexpected value");
     }
 
     private static bool IsGenericEnumerator(Type fieldFieldType, out object o)
