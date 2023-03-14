@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using BitwiseSerialiser;
 using NUnit.Framework;
 #pragma warning disable CS8602
@@ -225,9 +226,182 @@ EndMarker: 0x55AA (21930)
         Assert.That(dst.ChildStruct[2].ThreeBytesBig, Is.EqualTo(src.ChildStruct[2].ThreeBytesBig), "4c");
         Assert.That(dst.ChildStruct[2].StartMarker, Is.EqualTo(0x7F80), "5c");
         Assert.That(dst.ChildStruct[2].EndMarker, Is.EqualTo(0xAA55), "6c");
+        
+        Console.WriteLine(TypeDescriber.Describe(dst));
+    }
+
+    [Test]
+    public void can_have_a_fixed_length_byte_string()
+    {
+        var expected = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10 };
+
+        var src = new FixedArrayStructure
+        {
+            FixedArray = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 },
+            NullableArray = new byte[] { 0x06, 0x07, 0x08, 0x09, 0x10 }
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<FixedArrayStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.FixedArray, Is.EqualTo(src.FixedArray).AsCollection, "1");
+        Assert.That(dst.NullableArray, Is.EqualTo(src.NullableArray).AsCollection, "2");
+    }
+
+    [Test]
+    public void can_have_variable_length_byte_strings_based_on_other_fields()
+    {
+        var expected = new byte[] { 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10 };
+
+        var src = new VariableArrayStructure
+        {
+            Length = 5,
+            Variable = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 },
+            NullableVariable = new byte[] { 0x06, 0x07, 0x08, 0x09, 0x10 }
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<VariableArrayStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.Length, Is.EqualTo(src.Length), "1");
+        Assert.That(dst.Variable, Is.EqualTo(src.Variable).AsCollection, "2");
+        Assert.That(dst.NullableVariable, Is.EqualTo(src.NullableVariable).AsCollection, "3");
+    }
+
+    [Test]
+    public void can_collect_all_remaining_bytes_into_an_array()
+    {
+        var expected = new byte[] { 0x12, 0x34, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21 };
+
+        var src = new RemainingBytesStructure
+        {
+            SomethingElse = 0x1234,
+            VariableArray = Encoding.UTF8.GetBytes("Hello, world!")
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<RemainingBytesStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.SomethingElse, Is.EqualTo(src.SomethingElse), "1");
+        Assert.That(dst.VariableArray, Is.EqualTo(src.VariableArray).AsCollection, "2");
+    }
+    
+    [Test]
+    public void can_have_variable_length_byte_strings_based_on_stop_valued_bytes()
+    {
+        var expected = new byte[] { 0x12,0x34, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x00, 0x56, 0x78};
+
+        var src = new NullTerminatedStructure
+        {
+            VariableArray = Encoding.UTF8.GetBytes("Hello, world!\0")
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<NullTerminatedStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.Header, Is.EqualTo(0x1234), "1");
+        Assert.That(dst.VariableArray, Is.EqualTo(src.VariableArray).AsCollection, "2");
+        Assert.That(dst.Footer, Is.EqualTo(0x5678), "3");
+    }
+    
+    
+    [Test]
+    public void when_stop_valued_bytes_strings_are_supplied_without_the_stop_value_then_it_is_inserted()
+    {
+        var expected = new byte[] { 0x12,0x34, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x00, 0x56, 0x78};
+
+        var src = new NullTerminatedStructure
+        {
+            VariableArray = Encoding.UTF8.GetBytes("Hello, world!") // No '\0' here
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<NullTerminatedStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.Header, Is.EqualTo(0x1234), "1");
+        Assert.That(dst.VariableArray, Is.EqualTo(Encoding.UTF8.GetBytes("Hello, world!\0")).AsCollection, "2"); // But the '\0' is in the result
+        Assert.That(dst.Footer, Is.EqualTo(0x5678), "3");
     }
 
     private static string FixNewLines(string result) => result.Replace("\r", "");
+}
+
+
+[ByteLayout]
+[SuppressMessage("ReSharper", "UnassignedField.Global")]
+public class NullTerminatedStructure
+{
+    [BigEndian(bytes: 2, order: 0), FixedValue(0x12,0x34)]
+    public int Header;
+    
+    [ValueTerminatedByteString(stopValue: 0x00, order: 1)]
+    public byte[]? VariableArray;
+    
+    [BigEndian(bytes: 2, order: 2), FixedValue(0x56,0x78)]
+    public int Footer;
+}
+
+[ByteLayout]
+[SuppressMessage("ReSharper", "UnassignedField.Global")]
+public class VariableArrayStructure
+{
+    [BigEndian(bytes: 2, order: 0)]
+    public int Length;
+    
+    [VariableByteString(source: nameof(GetLength), order: 1)]
+    public byte[] Variable = Array.Empty<byte>();
+    
+    [VariableByteString(source: nameof(GetLength), order: 1)]
+    public byte[]? NullableVariable;
+    
+    public int GetLength()=>Length;
+}
+
+[ByteLayout]
+[SuppressMessage("ReSharper", "UnassignedField.Global")]
+public class RemainingBytesStructure
+{
+    [BigEndian(bytes: 2, order: 0)]
+    public int SomethingElse;
+    
+    [RemainingBytes(order: 1)]
+    public byte[]? VariableArray;
+}
+
+[ByteLayout]
+[SuppressMessage("ReSharper", "UnassignedField.Global")]
+public class FixedArrayStructure
+{
+    [ByteString(bytes: 5, order: 1)]
+    public byte[] FixedArray = Array.Empty<byte>();
+    
+    [ByteString(bytes: 5, order: 1)]
+    public byte[]? NullableArray;
 }
 
 [ByteLayout]

@@ -151,7 +151,7 @@ public static class ByteSerialiser
 
             return;
         }
-            
+        
         if (IsVariableByteString(field, out var variableLengthName)) // We check the declared length against actual
         {
             var byteValues = GetValueAsByteArray(source, field);
@@ -163,6 +163,21 @@ public static class ByteSerialiser
             {
                 output.Add(byteValues[i]);
             }
+
+            return;
+        }
+        
+        if (IsValueTerminatedByteString(field, out var stopValue)) // We check the declared length against actual
+        {
+            var byteValues = GetValueAsByteArray(source, field);
+
+            for (var i = 0; i < byteValues.Length; i++)
+            {
+                output.Add(byteValues[i]);
+            }
+
+            // if the value doesn't have the stop in place, append it.
+            if (byteValues[byteValues.Length - 1] != stopValue) output.Add(stopValue);
 
             return;
         }
@@ -322,7 +337,7 @@ public static class ByteSerialiser
             CastAndSetField(field, output, byteValues);
             return;
         }
-            
+        
         if (IsVariableByteString(field, out var functionName))
         {
             byteCount = GetLengthFromNamedFunction(field, output, functionName);
@@ -344,6 +359,21 @@ public static class ByteSerialiser
             }
 
             CastAndSetField(field, output, byteValues);
+            return;
+        }
+        
+        if (IsValueTerminatedByteString(field, out var stopValue))
+        {
+            var length = feed.GetRemainingLength();
+            var byteValues = new List<byte>();
+            for (var i = 0; i < length; i++) // we will stop at the end of input if we don't see the stop value
+            {
+                var b = feed.NextByte();
+                byteValues.Add(b);
+                if (b == stopValue) break;
+            }
+
+            CastAndSetField(field, output, byteValues.ToArray());
             return;
         }
 
@@ -585,8 +615,27 @@ public static class ByteSerialiser
         if (byteCount is null) return (false, 0);
         return (true, byteCount.Value);
     }
-        
-        
+    
+    
+    private static readonly WeakCache<MemberInfo, (bool, byte)> _isValueTerminateByteStringCache = new(CalculateIsValueTerminatedByteString);
+
+    private static bool IsValueTerminatedByteString(MemberInfo field, out byte stopValue)
+    {
+        var (result, value) = _isValueTerminateByteStringCache.Get(field);
+        stopValue = value;
+        return result;
+    }
+
+    private static (bool, byte) CalculateIsValueTerminatedByteString(MemberInfo field)
+    {
+        var match = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(ValueTerminatedByteStringAttribute));
+        if (match is null) return (false, 0);
+        var value = match.ConstructorArguments[0].Value as byte?;
+        if (value is null) return (false, 0);
+        return (true, value.Value);
+    }
+    
+    
     private static readonly WeakCache<MemberInfo, (bool, string)> _isVariableByteStringCache = new(CalculateIsVariableByteString);
 
     private static bool IsVariableByteString(MemberInfo field, out string functionName)
@@ -700,6 +749,12 @@ public static class ByteSerialiser
         if (varByteStrAttr is not null && varByteStrAttr.Count == 2)
         {
             return varByteStrAttr[1].Value as int? ?? throw new Exception($"Invalid {nameof(VariableByteStringAttribute)} definition on {field.DeclaringType?.Name}.{field.Name}");
+        }
+
+        var vtByteStrAttr = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(ValueTerminatedByteStringAttribute))?.ConstructorArguments;
+        if (vtByteStrAttr is not null && vtByteStrAttr.Count == 2)
+        {
+            return vtByteStrAttr[1].Value as int? ?? throw new Exception($"Invalid {nameof(ValueTerminatedByteStringAttribute)} definition on {field.DeclaringType?.Name}.{field.Name}");
         }
             
         var remByteAttr = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(RemainingBytesAttribute))?.ConstructorArguments;

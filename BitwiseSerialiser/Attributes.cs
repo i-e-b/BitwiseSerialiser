@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 
 namespace BitwiseSerialiser;
@@ -133,7 +132,12 @@ public class ByteLayoutVariableChildAttribute : Attribute
 }
 
 /// <summary>
-/// Indicates that a byte value field should always have a fixed value
+/// Indicates that a byte value field should always have a fixed value.
+/// <p></p>
+/// On serialisation, this fixed value will be written to the output.
+/// <p></p>
+/// On deserialisation, the actual <b>supplied</b> value will be populated
+/// into the target object field.
 /// </summary>
 [MeansImplicitUse, AttributeUsage(AttributeTargets.Field)]
 public class FixedValueAttribute : Attribute
@@ -451,131 +455,52 @@ public class VariableByteStringAttribute : Attribute
     }
 }
 
-internal class ByteWriter
+
+/// <summary>
+/// Represents a variable length list of bytes in input order.
+/// The string ends when the given byte is reached.
+/// The value <b>includes</b> this byte.
+/// <p></p>
+/// For example, with a <c>StopValue</c> of <c>0x00</c>, this
+/// will read a C-style null-terminated character string.
+/// </summary>
+[MeansImplicitUse, AttributeUsage(AttributeTargets.Field)]
+public class ValueTerminatedByteStringAttribute : Attribute
 {
-    private readonly List<byte> _output;
-    private int _offset;
-    private byte _waiting;
-
-    public ByteWriter()
-    {
-        _offset = 0;
-        _waiting = 0;
-        _output = new List<byte>();
-    }
-        
-    public byte[] ToArray()
-    {
-        // flush last byte?
-        if (_offset != 0) _output.Add(_waiting);
-            
-        // return output
-        return _output.ToArray();
-    }
-        
-    public void Add(byte value)
-    {
-        if (_offset == 0) _output.Add(value);
-        else WriteBitsBigEndian(value, 8);
-    }
-
-    public void WriteBytesBigEnd(ulong value, int byteCount)
-    {
-        for (var i = byteCount - 1; i >= 0; i--)
-        {
-            Add((byte)((value >> (i * 8)) & 0xFF));
-        }
-    }
-
-    public void WriteBytesLittleEnd(ulong value, int byteCount)
-    {
-        for (var i = 0; i < byteCount; i++)
-        {
-            Add((byte)((value >> (i * 8)) & 0xFF));
-        }
-    }
-
+    /// <summary>
+    /// Byte size of the field.
+    /// Number of bytes that are used for this field.
+    /// </summary>
+    public byte StopValue { get; set; }
+    
+    /// <summary>
+    /// Position in bitstream relative to other fields in the container.
+    /// This should start at zero and increment by 1 for each field.
+    /// This is NOT the bit or byte offset.
+    /// </summary>
+    public int Order { get; set; }
 
     /// <summary>
-    /// Write a partial byte. While input is not byte aligned,
-    /// all writes will be slower
+    /// Represents a variable length list of bytes in input order
     /// </summary>
-    public void WriteBitsBigEndian(ulong value, int bitCount)
+    /// <param name="stopValue">Byte value that indicates the end of this string</param>
+    /// <param name="order">The order through the byte array in which this value should be processed</param>
+    public ValueTerminatedByteStringAttribute(byte stopValue, int order)
     {
-        if (bitCount < 1) return;
-        if (bitCount > 64) throw new Exception("Invalid bit length in ByteWriter");
-            
-        var rem = 8 - _offset;
-        int shift;
-        ulong mask;
-            
-        // Simple case: will it fit in remaining data of one byte?
-        if (bitCount <= rem)
-        {
-            // example:
-            // offset = 3, bit count = 3; value = _ ... _ A B C
-            // 0 1 2 3 4 5 6 7
-            // x x x A B C _ _
-            // next offset = 6
-            // _waiting |= (value & b00000111) << 2
-                
-            shift = rem - bitCount;
-            mask = (1ul << bitCount) - 1ul;
-            _waiting |= (byte)((value & mask) << shift);
-            _offset = (_offset + bitCount) % 8;
-            if (_offset == 0)
-            {
-                _output.Add(_waiting);
-                _waiting = 0;
-            }
-            return;
-        }
-            
-        // Complex case: Data spans multiple bytes
-            
-        // example 1:
-        // offset = 3 (rem = 5), bitCount = 16
-        //
-        // /-- _waiting --\
-        // 0 1 2 3 4 5 6 7 | 0 1 2 3 4 5 6 7 | 0 1 2 3 4 5 6 7
-        // x x x A B C D E | F G H I J K L M | N O P _ _ _ _ _
-        //
-        // bitCount 
-        // byte[+0] = ((value & b1111_1xXx__xXxX_xXxX) >> 11)
-        // byte[+1] = ((value & b0000_0111__1111_1xXx) >>  3)
-        // byte[+2] = ((value & b0000_0000__0000_0111) <<  5)
-            
-        // example 2:
-        // offset = 3 (rem = 5), bitCount = 13
-        //
-        // /-- _waiting --\
-        // 0 1 2 3 4 5 6 7 | 0 1 2 3 4 5 6 7
-        // x x x A B C D E | F G H I J K L M
-        //
-        // bitCount 
-        // byte[+0] = ((value & b0001_1111__xXxX_xXxX) >> 8)
-        // byte[+1] = ((value & b0000_0000__1111_1111) >>  3)
-            
-        // first partial
-        shift = bitCount - rem;
-        mask = (1ul << bitCount) - 1;
-        _waiting |= (byte)((value & mask) >> shift);
-        _output.Add(_waiting);
-        _waiting = 0;
-        _offset = 0;
-            
-        // as many completes as will fit
-        while (shift > 0){
-            shift -= 8;
-            _output.Add((byte)((value >> shift) & 0xff));
-        }
-            
-        // last partial, only if we're going to end un-aligned
-        if (shift < 0)
-        {
-            shift = -shift;
-            _offset = 8 - shift;
-            _waiting = (byte)((value & 0xff) << shift);
-        }
+        StopValue = stopValue;
+        Order = order;
+    }
+
+    /// <summary>
+    /// List of field types that this can be validly applied to
+    /// </summary>
+    public static readonly Type[] AcceptableTypes = { typeof(byte[]) };
+
+    /// <summary>
+    /// Returns true if the given type can be used for BigEndian fields
+    /// </summary>
+    public static bool IsAcceptable(Type? fieldType)
+    {
+        return AcceptableTypes.Contains(fieldType);
     }
 }
