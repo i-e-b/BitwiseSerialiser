@@ -97,7 +97,7 @@ public class ExtensionTests
         };
         
         var hexStr = original.ToHexString();
-        Assert.That(hexStr, Is.EqualTo("0102040810204080ff7f3f1f0f07030100"));
+        Assert.That(hexStr, Is.EqualTo("0102040810204080FF7F3F1F0F07030100"));
         
         var result = hexStr.ParseBytes();
         Assert.That(result, Is.EqualTo(original).AsCollection);

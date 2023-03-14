@@ -197,13 +197,19 @@ public static class BinaryExtensions
     {
         if (hexStr is null || hexStr.Length < 1) return Array.Empty<byte>();
         
-        var accum = new List<byte>();
-        for (int i = 0; i < hexStr.Length; i += 2)
+        var bytes = new byte[hexStr.Length / 2];
+        for (var i = 0; i < bytes.Length; i++)
         {
-            accum.Add(byte.Parse($"{hexStr[i]}{hexStr[i + 1]}", NumberStyles.HexNumber));
+            var hi = hexStr[i * 2] - 65;
+            hi = hi + 10 + ((hi >> 31) & 7);
+
+            var lo = hexStr[i * 2 + 1] - 65;
+            lo = lo + 10 + ((lo >> 31) & 7) & 0x0f;
+
+            bytes[i] = (byte)(lo | hi << 4);
         }
-        
-        return accum.ToArray();
+
+        return bytes;
     }
 
     /// <summary>
@@ -214,7 +220,16 @@ public static class BinaryExtensions
     public static string ToHexString(this byte[]? data)
     {
         if (data is null) return "";
-        return string.Join("", data.Select(b=>b.ToString("x2")));
+        var c = new char[data.Length * 2];
+        for (var i = 0; i < data.Length; i++)
+        {
+            var b = data[i] >> 4;
+            c[i * 2] = (char)(55 + b + (((b - 10) >> 31) & -7));
+            b = data[i] & 0xF;
+            c[i * 2 + 1] = (char)(55 + b + (((b - 10) >> 31) & -7));
+        }
+
+        return new string(c);
     }
 
     /// <summary>
