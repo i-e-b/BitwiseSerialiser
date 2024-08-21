@@ -286,12 +286,18 @@ public static class ByteSerialiser
         }
     }
 
-    private static Type? GetSpecialisation(object output, string specialiser)
+    private static Type? GetSpecialisation(object output, string functionName)
     {
-        // TODO: read 'SpecialiseWith' from 'ByteLayoutAttribute'
-        throw new NotImplementedException();
-    }
+        // Try to find public instance method by name, and check it's valid
+        var method = output.GetType().GetMethod(functionName, BindingFlags.Public | BindingFlags.Instance);
+        if (method is null) throw new Exception($"No such specialise function '{functionName}' in type {output.GetType().Name}");
+        var methodParams = method.GetParameters();
+        if (methodParams.Length > 0) throw new Exception($"Invalid specialise function: {output.GetType().Name}.{functionName}({string.Join(", ", methodParams.Select(p => p.Name))}); Specialise functions should have no parameters");
+        if (method.ReturnType != typeof(Type)) throw new Exception($"Specialise function {output.GetType().Name}.{functionName}() returns {method.ReturnType.Name}, but should return 'Type'");
 
+        // Call the function to get new type
+        return method.Invoke(output, null!) as Type;
+    }
 
     private static void RestoreFieldsRecursive(RunOutByteQueue feed, object output)
     {
@@ -583,9 +589,6 @@ public static class ByteSerialiser
         return (true, bytes.Select(v=>(byte)v.Value).ToArray());
     }
     
-    
-    
-    
     private static readonly WeakCache<Type, (bool, string?)> _isByteLayoutCache = new(CalculateIsByteLayout);
     
     private static bool IsByteLayout(object field, out string? attr)
@@ -602,12 +605,6 @@ public static class ByteSerialiser
         var param = match.NamedArguments?.Where(a => a.MemberName == nameof(ByteLayoutAttribute.SpecialiseWith)).Select(m=>m.TypedValue.Value.ToString()).FirstOrDefault();
         return (true, param);
     }
-    
-    
-    
-    
-    
-    
 
     private static readonly WeakCache<MemberInfo, (bool, int)> _isBigEndCache = new(CalculateIsBigEnd);
 
