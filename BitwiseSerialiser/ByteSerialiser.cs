@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 
 namespace BitwiseSerialiser;
 
@@ -69,7 +71,7 @@ public static class ByteSerialiser
         result = Activator.CreateInstance(type) ?? throw new Exception($"Failed to create instance of {type.Name}");
         var feed = new RunOutByteQueue(source);
 
-        RestoreObjectRecursive(feed, result);
+        RestoreObjectRecursive(feed, ref result);
 
         return !feed.WasOverRun;
     }
@@ -107,7 +109,7 @@ public static class ByteSerialiser
                 if (bytes.Length != byteCount) throw new Exception($"Mismatch between {nameof(ByteStringAttribute)} and {nameof(FixedValueAttribute)} definition in {field.DeclaringType?.Name}.{field.Name}");
                 for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             } else {
-                if (bytes.Length != byteCount) throw new Exception($"Field {field.DeclaringType?.Name}.{field.Name} with {nameof(FixedValueAttribute)} must also have one of {nameof(BigEndianAttribute)}, {nameof(LittleEndianAttribute)}, {nameof(ByteStringAttribute)}");
+                if (bytes.Length != byteCount) throw new Exception($"Field {field.DeclaringType?.Name}.{field.Name} with {nameof(FixedValueAttribute)} must also have one of {nameof(BigEndianAttribute)}, {nameof(LittleEndianAttribute)}, {nameof(ByteStringAttribute)}, {nameof(AsciiStringAttribute)}");
                 for (int i = 0; i < bytes.Length; i++) output.Add(bytes[i]);
             }
             return;
@@ -132,7 +134,7 @@ public static class ByteSerialiser
             return;
         }
 
-        if (IsByteString(field, out byteCount)) // if value is longer than declared, we truncate
+        if (IsByteString(field, out byteCount) || IsAsciiString(field, out byteCount)) // if value is longer than declared, we truncate
         {
             var byteValues = GetValueAsByteArray(source, field);
                 
@@ -151,7 +153,7 @@ public static class ByteSerialiser
 
             return;
         }
-        
+
         if (IsVariableByteString(field, out var variableLengthName)) // We check the declared length against actual
         {
             var byteValues = GetValueAsByteArray(source, field);
@@ -266,7 +268,32 @@ public static class ByteSerialiser
         return !field.IsSpecialName;
     }
 
-    private static void RestoreObjectRecursive(RunOutByteQueue feed, object output)
+    private static void RestoreObjectRecursive(RunOutByteQueue feed, ref object output)
+    {
+        var position = feed.GetPosition();
+        RestoreFieldsRecursive(feed, output);
+
+        if (IsByteLayout(output, out var specialiser))
+        {
+            if (specialiser is null) return; // don't need to specialise
+            var specialType = GetSpecialisation(output, specialiser);
+            if (specialType is null) return; // this one not different
+            
+            // rewind the source, make a new output object, fill it again
+            feed.RewindTo(position);
+            output = Activator.CreateInstance(specialType) ?? throw new Exception($"Failed to create instance of {specialType.Name}");
+            RestoreFieldsRecursive(feed, output);
+        }
+    }
+
+    private static Type? GetSpecialisation(object output, string specialiser)
+    {
+        // TODO: read 'SpecialiseWith' from 'ByteLayoutAttribute'
+        throw new NotImplementedException();
+    }
+
+
+    private static void RestoreFieldsRecursive(RunOutByteQueue feed, object output)
     {
         var publicFields = _publicFieldCache.Get(output.GetType());
 
@@ -327,6 +354,17 @@ public static class ByteSerialiser
         }
 
         if (IsByteString(field, out byteCount))
+        {
+            var byteValues = new byte[byteCount];
+            for (var i = 0; i < byteCount; i++)
+            {
+                byteValues[i] = feed.NextByte();
+            }
+
+            CastAndSetField(field, output, byteValues);
+            return;
+        }
+        if (IsAsciiString(field, out byteCount))
         {
             var byteValues = new byte[byteCount];
             for (var i = 0; i < byteCount; i++)
@@ -407,7 +445,7 @@ public static class ByteSerialiser
                                 ?? Activator.CreateInstance(coreType)
                                 ?? throw new Exception($"Failed to find or create instance of {field.DeclaringType?.Name}.{field.Name}");
 
-                    RestoreObjectRecursive(feed, child);
+                    RestoreObjectRecursive(feed, ref child);
                     target.SetValue(child,i);
                 }
                 field.SetValue(output, target);
@@ -430,7 +468,7 @@ public static class ByteSerialiser
                                 ?? Activator.CreateInstance(coreType)
                                 ?? throw new Exception($"Failed to find or create instance of {field.DeclaringType?.Name}.{field.Name}");
 
-                    RestoreObjectRecursive(feed, child);
+                    RestoreObjectRecursive(feed, ref child);
                     target.SetValue(child,i);
                 }
                 field.SetValue(output, target);
@@ -442,7 +480,7 @@ public static class ByteSerialiser
                             ?? Activator.CreateInstance(field.FieldType)
                             ?? throw new Exception($"Failed to find or create instance of {field.DeclaringType?.Name}.{field.Name}");
 
-                RestoreObjectRecursive(feed, child);
+                RestoreObjectRecursive(feed, ref child);
                 field.SetValue(output, child);
             }
             return;
@@ -504,6 +542,7 @@ public static class ByteSerialiser
 
         /**/
         if (t == typeof(byte[])) field.SetValue(output, byteValues);
+        else if (t == typeof(string)) field.SetValue(output, Encoding.ASCII.GetString(byteValues));
         else throw new Exception($"Unsupported type '{t.Name}' in {field.DeclaringType?.Name}.{field.Name}");
     }
 
@@ -522,6 +561,7 @@ public static class ByteSerialiser
         var val = field.GetValue(source);
         if (val is null) return Array.Empty<byte>();
         if (val is byte[] arr) return arr;
+        if (val is string str) return Encoding.ASCII.GetBytes(str);
         return Array.Empty<byte>();
     }
 
@@ -542,7 +582,32 @@ public static class ByteSerialiser
         if (bytes is null) return (false, Array.Empty<byte>());
         return (true, bytes.Select(v=>(byte)v.Value).ToArray());
     }
+    
+    
+    
+    
+    private static readonly WeakCache<Type, (bool, string?)> _isByteLayoutCache = new(CalculateIsByteLayout);
+    
+    private static bool IsByteLayout(object field, out string? attr)
+    {
+        var (result, data) = _isByteLayoutCache.Get(field.GetType());
+        attr = data;
+        return result;
+    }
 
+    private static (bool, string?) CalculateIsByteLayout(Type obj)
+    {
+        var match = obj.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(ByteLayoutAttribute));
+        if (match is null) return (false, null);
+        var param = match.NamedArguments?.Where(a => a.MemberName == nameof(ByteLayoutAttribute.SpecialiseWith)).Select(m=>m.TypedValue.Value.ToString()).FirstOrDefault();
+        return (true, param);
+    }
+    
+    
+    
+    
+    
+    
 
     private static readonly WeakCache<MemberInfo, (bool, int)> _isBigEndCache = new(CalculateIsBigEnd);
 
@@ -616,6 +681,23 @@ public static class ByteSerialiser
         return (true, byteCount.Value);
     }
     
+    private static readonly WeakCache<MemberInfo, (bool, int)> _isAsciiStringCache = new(CalculateIsAsciiString);
+
+    private static bool IsAsciiString(MemberInfo field, out int bytes)
+    {
+        var (result, size) = _isAsciiStringCache.Get(field);
+        bytes = size;
+        return result;
+    }
+
+    private static (bool, int) CalculateIsAsciiString(MemberInfo field)
+    {
+        var match = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(AsciiStringAttribute));
+        if (match is null) return (false, 0);
+        var byteCount = match.ConstructorArguments[0].Value as int?;
+        if (byteCount is null) return (false, 0);
+        return (true, byteCount.Value);
+    }
     
     private static readonly WeakCache<MemberInfo, (bool, byte)> _isValueTerminateByteStringCache = new(CalculateIsValueTerminatedByteString);
 
@@ -743,6 +825,12 @@ public static class ByteSerialiser
         if (byteStrAttr is not null && byteStrAttr.Count == 2)
         {
             return byteStrAttr[1].Value as int? ?? throw new Exception($"Invalid {nameof(ByteStringAttribute)} definition on {field.DeclaringType?.Name}.{field.Name}");
+        }
+        
+        var asciiStrAttr = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(AsciiStringAttribute))?.ConstructorArguments;
+        if (asciiStrAttr is not null && asciiStrAttr.Count == 2)
+        {
+            return asciiStrAttr[1].Value as int? ?? throw new Exception($"Invalid {nameof(AsciiStringAttribute)} definition on {field.DeclaringType?.Name}.{field.Name}");
         }
 
         var varByteStrAttr = field.CustomAttributes.OrEmpty().FirstOrDefault(a => a.AttributeType == typeof(VariableByteStringAttribute))?.ConstructorArguments;
@@ -896,5 +984,16 @@ public static class ByteSerialiser
         }
 
         public int GetRemainingLength() => _q.Count;
+
+        public int GetPosition()
+        {
+            return 0;
+            //throw new NotImplementedException();
+        }
+
+        public void RewindTo(int position)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using JetBrains.Annotations;
 
 namespace BitwiseSerialiser;
 // ReSharper disable UnusedMember.Global
@@ -10,11 +11,6 @@ namespace BitwiseSerialiser;
 // ReSharper disable MemberCanBePrivate.Global
 
 /// <summary>
-/// Silences Rider/Resharper warnings about unused fields
-/// </summary>
-[AttributeUsage(AttributeTargets.All)] public class MeansImplicitUseAttribute : Attribute { }
-
-/// <summary>
 /// Marks a class as representing the fields in a byte array.
 /// Each FIELD in the marked class will need to have a byte order and position marker,
 /// either <see cref="BigEndianAttribute"/> or <see cref="ByteLayoutChildAttribute"/>
@@ -22,6 +18,23 @@ namespace BitwiseSerialiser;
 [MeansImplicitUse, AttributeUsage(AttributeTargets.Class)]
 public class ByteLayoutAttribute : Attribute
 {
+    /// <summary>
+    /// Method definition for <see cref="ByteLayoutAttribute.SpecialiseWith"/>
+    /// </summary>
+    public delegate Type? SpecialisedType();
+    
+    /// <summary>
+    /// [Optional] Name of a function method on this type, that can give
+    /// a specialised version of this class.
+    /// <p/>
+    /// The named method should be a public instance method
+    /// that matches<see cref="SpecialisedType"/>
+    /// <p/>
+    /// The specialise method will be run after the base type has
+    /// been populated, and if it returns <c>null</c>, the base type
+    /// will be used.
+    /// </summary>
+    public string? SpecialiseWith { get; set; }
 }
 
 /// <summary>
@@ -348,6 +361,50 @@ public class ByteStringAttribute : Attribute
     /// List of field types that BigEndian can be validly applied to
     /// </summary>
     public static readonly Type[] AcceptableTypes = { typeof(byte[]) };
+
+    /// <summary>
+    /// Returns true if the given type can be used for BigEndian fields
+    /// </summary>
+    public static bool IsAcceptable(Type? fieldType)
+    {
+        return AcceptableTypes.Contains(fieldType);
+    }
+}
+
+/// <summary>
+/// Represents a known-length list of bytes in input order, interpreted as an ASCII string
+/// </summary>
+[MeansImplicitUse, AttributeUsage(AttributeTargets.Field)]
+public class AsciiStringAttribute : Attribute
+{
+    /// <summary>
+    /// Byte size of the field.
+    /// Number of bytes that are used for this field.
+    /// </summary>
+    public int Bytes { get; set; }
+    
+    /// <summary>
+    /// Position in bitstream relative to other fields in the container.
+    /// This should start at zero and increment by 1 for each field.
+    /// This is NOT the bit or byte offset.
+    /// </summary>
+    public int Order { get; set; }
+
+    /// <summary>
+    /// Represents a known-length list of bytes in input order
+    /// </summary>
+    /// <param name="bytes">Number of bytes in this value</param>
+    /// <param name="order">The order through the byte array in which this value should be processed</param>
+    public AsciiStringAttribute(int bytes, int order)
+    {
+        Bytes = bytes;
+        Order = order;
+    }
+
+    /// <summary>
+    /// List of field types that BigEndian can be validly applied to
+    /// </summary>
+    public static readonly Type[] AcceptableTypes = { typeof(string) };
 
     /// <summary>
     /// Returns true if the given type can be used for BigEndian fields

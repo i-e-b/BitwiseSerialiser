@@ -237,8 +237,8 @@ EndMarker: 0x55AA (21930)
 
         var src = new FixedArrayStructure
         {
-            FixedArray = new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 },
-            NullableArray = new byte[] { 0x06, 0x07, 0x08, 0x09, 0x10 }
+            FixedArray = [0x01, 0x02, 0x03, 0x04, 0x05],
+            NullableArray = [0x06, 0x07, 0x08, 0x09, 0x10]
         };
         
         var actual = ByteSerialiser.ToBytes(src);
@@ -251,6 +251,31 @@ EndMarker: 0x55AA (21930)
         
         Assert.That(dst.FixedArray, Is.EqualTo(src.FixedArray).AsCollection, "1");
         Assert.That(dst.NullableArray, Is.EqualTo(src.NullableArray).AsCollection, "2");
+    }
+    
+    [Test]
+    public void can_have_a_fixed_length_ascii_string()
+    {
+        var expected = new byte[]{0x48,0x65,0x6C,0x6C,0x6F,0x57,0x6F,0x72,0x6C,0x64};
+
+        var src = new FixedArrayWithStringStructure
+        {
+            FixedString = "Hello",
+            NullableString = "World",
+        };
+        
+        var actual = ByteSerialiser.ToBytes(src);
+        
+        Console.WriteLine(Convert.ToHexString(actual));
+        Assert.That(actual, Is.EqualTo(expected).AsCollection, "serialised value");
+        
+        var ok = ByteSerialiser.FromBytes<FixedArrayWithStringStructure>(actual, out var dst);
+        Assert.That(ok, Is.True);
+        
+        Assert.That(dst.FixedString, Is.EqualTo(src.FixedString).AsCollection, "1");
+        Assert.That(dst.NullableString, Is.EqualTo(src.NullableString).AsCollection, "2");
+
+        Console.WriteLine(TypeDescriber.Describe(dst));
     }
 
     [Test]
@@ -324,7 +349,6 @@ EndMarker: 0x55AA (21930)
         Assert.That(dst.Footer, Is.EqualTo(0x5678), "3");
     }
     
-    
     [Test]
     public void when_stop_valued_bytes_strings_are_supplied_without_the_stop_value_then_it_is_inserted()
     {
@@ -348,8 +372,66 @@ EndMarker: 0x55AA (21930)
         Assert.That(dst.Footer, Is.EqualTo(0x5678), "3");
     }
 
+    [Test]
+    public void can_specialise_main_type_when_deserialising()
+    {
+        var src = new GenericParent
+        {
+            TypeNumber = 1,
+            GenericData = 0x1234
+        };
+        
+        // Without special form
+        var actual = ByteSerialiser.ToBytes(src).Concat("GOOD"u8.ToArray());
+        var ok = ByteSerialiser.FromBytes<GenericParent>(actual, out var dst);
+        
+        Assert.That(ok, Is.True, "validation");
+        Assert.That(dst, Is.Not.Null, "result object");
+        Assert.That(dst.TypeNumber, Is.EqualTo(1), "result object");
+        Assert.That(dst.GenericData, Is.EqualTo(0x1234), "result object");
+        
+        // With special form
+        src.TypeNumber = 3;
+        actual = ByteSerialiser.ToBytes(src).Concat("GOOD"u8.ToArray());
+        ok = ByteSerialiser.FromBytes<GenericParent>(actual, out dst);
+        
+        Assert.That(ok, Is.True, "validation");
+        Assert.That(dst, Is.Not.Null, "result object");
+        Assert.That(dst.GetType(), Is.EqualTo(typeof(SpecialParent)), "result object");
+        Assert.That(dst.TypeNumber, Is.EqualTo(1), "result object");
+        Assert.That(dst.GenericData, Is.EqualTo(0x1234), "result object");
+        Assert.That(((SpecialParent)dst).FixedString, Is.EqualTo("GOOD"), "result object");
+    }
+
     private static string FixNewLines(string result) => result.Replace("\r", "");
 }
+
+[ByteLayout(SpecialiseWith = nameof(TableSpecialise))]
+public class GenericParent
+{
+    [BigEndian(bytes: 2, order: 0)]
+    public int TypeNumber;
+
+    [BigEndian(bytes: 2, order: 1)]
+    public int GenericData;
+    
+    public Type? TableSpecialise()
+    {
+        return TypeNumber switch
+        {
+            3 => typeof(SpecialParent),
+            _ => null
+        };
+    }
+}
+
+[ByteLayout]
+public class SpecialParent:GenericParent
+{
+    [AsciiString(bytes: 4, order: 0)]
+    public string FixedString = "BAD!";
+}
+
 
 
 [ByteLayout]
@@ -397,11 +479,22 @@ public class RemainingBytesStructure
 [SuppressMessage("ReSharper", "UnassignedField.Global")]
 public class FixedArrayStructure
 {
-    [ByteString(bytes: 5, order: 1)]
-    public byte[] FixedArray = Array.Empty<byte>();
+    [ByteString(bytes: 5, order: 0)]
+    public byte[] FixedArray = [];
     
     [ByteString(bytes: 5, order: 1)]
     public byte[]? NullableArray;
+}
+
+[ByteLayout]
+[SuppressMessage("ReSharper", "UnassignedField.Global")]
+public class FixedArrayWithStringStructure
+{
+    [AsciiString(bytes: 5, order: 0)]
+    public string FixedString = "";
+    
+    [AsciiString(bytes: 5, order: 1)]
+    public string? NullableString;
 }
 
 [ByteLayout]
