@@ -9,7 +9,6 @@ namespace ExampleFontReader;
 public class Os2WindowsMetricsTable : GeneralTable
 {
     public const string TableTag = "OS/2";
-    public string Type => TableTag;
 
     /// <summary>
     /// This should be usable for version 2+

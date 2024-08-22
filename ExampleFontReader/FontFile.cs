@@ -76,12 +76,19 @@ public class FontFile
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public abstract class GeneralTable
 {
+    /// <summary>
+    /// Original index entry for this table
+    /// </summary>
+    public TableDirectoryEntry? TableOffset { get; set; }
+    
     public static GeneralTable BuildFromDirectory(TableDirectoryEntry index, byte[] bytes)
     {
         return index.Tag switch
         {
             FontForgeTimeStampTable.TableTag => Build<FontForgeTimeStampTable>(index, bytes),
             Os2WindowsMetricsTable.TableTag => Build<Os2WindowsMetricsTable>(index, bytes),
+            ControlValueProgramTable.TableTag => Build<ControlValueProgramTable>(index, bytes),
+            FontHeaderTable.TableTag => Build<FontHeaderTable>(index, bytes),
             _ => new UnknownTable($"Unknown table type '{index.Tag}'")
         };
     }
@@ -89,7 +96,9 @@ public abstract class GeneralTable
     private static GeneralTable Build<T>(TableDirectoryEntry index, byte[] bytes) where T : new()
     {
         ByteSerialiser.FromBytes<T>(bytes, (int)index.Offset, (int)index.Length, out var result);
-        return result as GeneralTable ?? new UnknownTable($"Could not cast '{typeof(T).Name}' to a table");
+        var output = result as GeneralTable ?? new UnknownTable($"Could not cast '{typeof(T).Name}' to a table");
+        output.TableOffset = index;
+        return output;
     }
 }
 
@@ -113,19 +122,18 @@ public class UnknownTable : GeneralTable
 public class FontForgeTimeStampTable:GeneralTable
 {
     public const string TableTag = "FFTM";
-    public string Type => TableTag;
     private static readonly DateTime FontForgeEpoch = new(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     
-    [BigEndian(bytes: Size.I, order: 4)]
+    [BigEndian(bytes: Size.I, order: 0)]
     public uint Version;
     
-    [BigEndian(bytes: Size.Q, order: 5)]
+    [BigEndian(bytes: Size.Q, order: 1)]
     public uint FfTimeStamp;
     
-    [BigEndian(bytes: Size.Q, order: 6)]
+    [BigEndian(bytes: Size.Q, order: 2)]
     public uint SourceCreated;
     
-    [BigEndian(bytes: Size.Q, order: 7)]
+    [BigEndian(bytes: Size.Q, order: 3)]
     public uint SourceModified;
 
     public DateTime TimeStamp => FontForgeEpoch.AddSeconds(FfTimeStamp);

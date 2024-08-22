@@ -16,6 +16,9 @@ public static class Size
     /// <summary>Long offset to a table, same as uint32, NULL offset = 0x00000000</summary>
     public const int Offset32 = 4;
     
+    /// <summary>32-bit signed fixed-point number (16.16)</summary>
+    public const int Fixed = 4;
+    
     /// <summary>16-bit unsigned integer</summary>
     public const int uint16 = 2;
 
@@ -30,6 +33,11 @@ public static class Size
     
     /// <summary>uint16 that describes a quantity in font design units</summary>
     public const int UFWORD = 2;
+
+    /// <summary>
+    /// Date and time represented in number of seconds since 12:00 midnight, January 1, 1904, UTC. The value is represented as a signed 64-bit integer.
+    /// </summary>
+    public const int LONGDATETIME = 8;
     
     /// <summary> 4 byte ASCII string </summary>
     public const int Tag = 4;
@@ -37,6 +45,6 @@ public static class Size
     /// <summary> From FontForge documents </summary>
     public const int I = 4;
 
-    /// <summary> From FontForge documents </summary>
+    /// <summary> From FontForge documents. See <see cref="LONGDATETIME"/> </summary>
     public const int Q = 8;
 }
