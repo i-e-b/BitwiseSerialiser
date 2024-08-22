@@ -48,11 +48,29 @@ public static class ByteSerialiser
     /// <returns>True if source was long enough to complete the result, false if too short. Returns true if source is longer than needed.</returns>
     public static bool FromBytes<T>(IEnumerable<byte> source, out T result) where T : new()
     {
-        var ok = FromBytes(typeof(T), source, out var obj);
+        var data = source.ToArray();
+        var ok = FromBytes(typeof(T), data, 0, data.Length, out var obj);
         result = (T)obj;
         return ok;
     }
 
+    /// <summary>
+    /// Deserialise a byte array into a [ByteLayout] object.
+    /// If the byte array is too short to fill the object, a partially complete object is returned.
+    /// </summary>
+    /// <param name="source">Byte array to be deserialised</param>
+    /// <param name="result">New instance of T</param>
+    /// <param name="offset">Offset into source to start reading</param>
+    /// <param name="length">Maximum length to read from source</param>
+    /// <typeparam name="T">Target type. Must be marked with the [ByteLayout] attribute, and obey the rules of the attribute</typeparam>
+    /// <returns>True if source was long enough to complete the result, false if too short. Returns true if source is longer than needed.</returns>
+    public static bool FromBytes<T>(IEnumerable<byte> source, int offset, int length, out T result) where T : new()
+    {
+        var data = source.ToArray();
+        var ok = FromBytes(typeof(T), data, offset, length, out var obj);
+        result = (T)obj;
+        return ok;
+    }
 
     /// <summary>
     /// Deserialise a byte array into a [ByteLayout] object.
@@ -60,16 +78,18 @@ public static class ByteSerialiser
     /// </summary>
     /// <param name="type">Target type. Must be marked with the [ByteLayout] attribute, and obey the rules of the attribute</param>
     /// <param name="source">Byte array to be deserialised</param>
+    /// <param name="length">Maximum length to read from source</param>
     /// <param name="result">New instance of T</param>
+    /// <param name="offset">Offset into source to start reading</param>
     /// <returns>True if source was long enough to complete the result, false if too short. Returns true if source is longer than needed.</returns>
-    public static bool FromBytes(Type type, IEnumerable<byte> source, out object result)
+    public static bool FromBytes(Type type, byte[] source, int offset, int length, out object result)
     {
         // Plan:
         // 1. get all BigEndianAttribute fields recursively, ordered appropriately
         // 2. run through each field and pull a value (increment bytes with shift?)
         // 3. return the result type
         result = Activator.CreateInstance(type) ?? throw new Exception($"Failed to create instance of {type.Name}");
-        var feed = new RunOutByteQueue(source);
+        var feed = new RunOutByteSource(source, offset, length);
 
         RestoreObjectRecursive(feed, ref result);
 
@@ -268,7 +288,7 @@ public static class ByteSerialiser
         return !field.IsSpecialName;
     }
 
-    private static void RestoreObjectRecursive(RunOutByteQueue feed, ref object output)
+    private static void RestoreObjectRecursive(RunOutByteSource feed, ref object output)
     {
         var position = feed.GetPosition();
         RestoreFieldsRecursive(feed, output);
@@ -280,7 +300,7 @@ public static class ByteSerialiser
             if (specialType is null) return; // this one not different
             
             // rewind the source, make a new output object, fill it again
-            feed.RewindTo(position);
+            feed.ResetTo(position);
             output = Activator.CreateInstance(specialType) ?? throw new Exception($"Failed to create instance of {specialType.Name}");
             RestoreFieldsRecursive(feed, output);
         }
@@ -299,7 +319,7 @@ public static class ByteSerialiser
         return method.Invoke(output, null!) as Type;
     }
 
-    private static void RestoreFieldsRecursive(RunOutByteQueue feed, object output)
+    private static void RestoreFieldsRecursive(RunOutByteSource feed, object output)
     {
         var publicFields = _publicFieldCache.Get(output.GetType());
 
@@ -309,7 +329,7 @@ public static class ByteSerialiser
         }
     }
 
-    private static void RestoreFieldRecursive(RunOutByteQueue feed, FieldInfo field, object output)
+    private static void RestoreFieldRecursive(RunOutByteSource feed, FieldInfo field, object output)
     {
         if (IsBigEnd(field, out var byteCount))
         {
@@ -470,8 +490,7 @@ public static class ByteSerialiser
 
                 for (int i = 0; i < declaredCount; i++)
                 {
-                    var child = field.GetValue(output)
-                                ?? Activator.CreateInstance(coreType)
+                    var child = Activator.CreateInstance(coreType)
                                 ?? throw new Exception($"Failed to find or create instance of {field.DeclaringType?.Name}.{field.Name}");
 
                     RestoreObjectRecursive(feed, ref child);
@@ -869,128 +888,5 @@ public static class ByteSerialiser
         throw new Exception($"No byte layout definition found on {field.DeclaringType?.Name}.{field.Name}");
     }
 
-    internal class RunOutByteQueue
-    {
-        private readonly Queue<byte> _q;
-            
-        /// <summary>
-        /// Set to 'true' if more bytes were requested than supplied
-        /// </summary>
-        public bool WasOverRun { get; private set; }
 
-        /// <summary> Last byte we popped when doing `NextBits` </summary>
-        private byte _lastFrag;
-
-        /// <summary> Offset in bytes (caused when reading bits). Zero means aligned </summary>
-        private int _offset;
-
-        public RunOutByteQueue(IEnumerable<byte> source)
-        {
-            _q = new Queue<byte>(source);
-            _lastFrag = 0;
-            _offset=0;
-            WasOverRun = false;
-        }
-
-        /// <summary>
-        /// Read a non-byte aligned number of bits.
-        /// Output is in the least-significant bits.
-        /// Bit count must be 1..8.
-        /// <para></para>
-        /// Until `NextBits` is called with a value that
-        /// re-aligns the feed, `NextByte` will run slower.
-        /// </summary>
-        public byte NextBits(int bitCount)
-        {
-            if (bitCount < 1) return 0;
-            if (bitCount > 8) throw new Exception("Byte queue was asked for more than one byte");
-
-            if (_offset == 0) // we are currently aligned
-            {
-                if (_q.Count < 1) // there is no more data
-                {
-                    WasOverRun = true;
-                    return 0;
-                }
-
-                _lastFrag = _q.Dequeue();
-            }
-
-            // simple case: there is enough data in the last frag
-            int mask, shift;
-            byte result;
-            var rem = 8 - _offset;
-
-            if (rem >= bitCount)
-            {
-                // example:
-                // offset = 3, bit count = 3
-                // 0 1 2 3 4 5 6 7
-                // x x x ? ? ? _ _
-                // next offset = 6
-                // output = (last >> 2) & b00000111
-
-                shift = rem - bitCount;
-                mask = (1 << bitCount) - 1;
-                result = (byte)((_lastFrag >> shift) & mask);
-                _offset = (_offset + bitCount) % 8;
-                return result;
-            }
-
-            // complex case: we need to mix data from two bytes
-
-            // example:
-            // offset = 3, bitCount = 7 => rem = 5, bitsFromNext = 2
-            //
-            // Input state:
-            // 0 1 2 3 4 5 6 7 | 0 1 2 3 4 5 6 7
-            // x x x A B C D E | F G _ _ _ _ _ _
-            //
-            // Output state:
-            //     0 1 2 3 4 5 6 7
-            // --> _ A B C D E F G 
-            //
-            // next offset = 2
-            // output = ((last & b0001_1111) << 2) | ((next >> 6))
-            if (_q.Count < 1) WasOverRun = true;
-            var next = (_q.Count > 0) ? _q.Dequeue() : (byte)0;
-
-            mask = (1 << rem) - 1;
-            var bitsFromNext = bitCount - rem;
-            shift = 8 - bitsFromNext;
-
-            result = (byte)(((_lastFrag & mask) << bitsFromNext) | (next >> shift));
-
-            _lastFrag = next;
-            _offset = bitsFromNext;
-            return result;
-        }
-
-        /// <summary>
-        /// Remove a byte from the queue. If there are no bytes
-        /// available, a zero value is returned.
-        /// </summary>
-        public byte NextByte()
-        {
-            if (_offset != 0) return NextBits(8);
-            if (_q.Count > 0) return _q.Dequeue();
-
-            // queue was empty
-            WasOverRun = true;
-            return 0;
-        }
-
-        public int GetRemainingLength() => _q.Count;
-
-        public int GetPosition()
-        {
-            return 0;
-            //throw new NotImplementedException();
-        }
-
-        public void RewindTo(int position)
-        {
-            throw new NotImplementedException();
-        }
-    }
 }

@@ -398,9 +398,11 @@ EndMarker: 0x55AA (21930)
         Assert.That(ok, Is.True, "validation");
         Assert.That(dst, Is.Not.Null, "result object");
         Assert.That(dst.GetType(), Is.EqualTo(typeof(SpecialParent)), "result object");
-        Assert.That(dst.TypeNumber, Is.EqualTo(1), "result object");
-        Assert.That(dst.GenericData, Is.EqualTo(0x1234), "result object");
+        Assert.That(dst.TypeNumber, Is.EqualTo(3), "result object");
+        Assert.That(dst.GenericData, Is.EqualTo(4660), "result object");
         Assert.That(((SpecialParent)dst).FixedString, Is.EqualTo("GOOD"), "result object");
+
+        Console.WriteLine(TypeDescriber.Describe(dst));
     }
 
     private static string FixNewLines(string result) => result.Replace("\r", "");
@@ -428,7 +430,7 @@ public class GenericParent
 [ByteLayout]
 public class SpecialParent:GenericParent
 {
-    [AsciiString(bytes: 4, order: 0)]
+    [AsciiString(bytes: 4, order: 2)]
     public string FixedString = "BAD!";
 }
 

@@ -10,9 +10,26 @@ namespace ExampleFontReader;
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 public static class Size
 {
+    /// <summary>32-bit unsigned integer</summary>
     public const int uint32 = 4;
+    
+    /// <summary>Long offset to a table, same as uint32, NULL offset = 0x00000000</summary>
     public const int Offset32 = 4;
+    
+    /// <summary>16-bit unsigned integer</summary>
     public const int uint16 = 2;
+
+    /// <summary>16-bit signed integer</summary>
+    public const int int16 = 2;
+    
+    /// <summary>Short offset to a table, same as uint16, NULL offset = 0x0000</summary>
+    public const int Offset16 = 2;
+    
+    /// <summary>int16 that describes a quantity in font design units</summary>
+    public const int FWORD = 2;
+    
+    /// <summary>uint16 that describes a quantity in font design units</summary>
+    public const int UFWORD = 2;
     
     /// <summary> 4 byte ASCII string </summary>
     public const int Tag = 4;
