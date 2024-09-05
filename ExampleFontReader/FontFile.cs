@@ -80,7 +80,10 @@ public abstract class GeneralTable
     /// Original index entry for this table
     /// </summary>
     public TableDirectoryEntry? TableOffset { get; set; }
-    
+
+    /// <summary>
+    /// Dispatcher for Tag -> C# type
+    /// </summary>
     public static GeneralTable BuildFromDirectory(TableDirectoryEntry index, byte[] bytes)
     {
         return index.Tag switch
@@ -88,6 +91,7 @@ public abstract class GeneralTable
             FontForgeTimeStampTable.TableTag => Build<FontForgeTimeStampTable>(index, bytes),
             Os2WindowsMetricsTable.TableTag => Build<Os2WindowsMetricsTable>(index, bytes),
             ControlValueProgramTable.TableTag => Build<ControlValueProgramTable>(index, bytes),
+            CharacterToGlyphIndexMappingTable.TableTag => Build<CharacterToGlyphIndexMappingTable>(index, bytes),
             FontHeaderTable.TableTag => Build<FontHeaderTable>(index, bytes),
             _ => new UnknownTable($"Unknown table type '{index.Tag}'")
         };
@@ -113,30 +117,4 @@ public class UnknownTable : GeneralTable
     {
         Message = msg;
     }
-}
-
-/// <summary>
-/// https://fonttools.readthedocs.io/en/latest/_modules/fontTools/ttLib/tables/F_F_T_M_.html#table_F_F_T_M_
-/// </summary>
-[ByteLayout]
-public class FontForgeTimeStampTable:GeneralTable
-{
-    public const string TableTag = "FFTM";
-    private static readonly DateTime FontForgeEpoch = new(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-    
-    [BigEndian(bytes: Size.I, order: 0)]
-    public uint Version;
-    
-    [BigEndian(bytes: Size.Q, order: 1)]
-    public uint FfTimeStamp;
-    
-    [BigEndian(bytes: Size.Q, order: 2)]
-    public uint SourceCreated;
-    
-    [BigEndian(bytes: Size.Q, order: 3)]
-    public uint SourceModified;
-
-    public DateTime TimeStamp => FontForgeEpoch.AddSeconds(FfTimeStamp);
-    public DateTime Created => FontForgeEpoch.AddSeconds(SourceCreated);
-    public DateTime Modified => FontForgeEpoch.AddSeconds(SourceModified);
 }

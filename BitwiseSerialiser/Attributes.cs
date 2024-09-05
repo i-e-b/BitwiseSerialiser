@@ -118,6 +118,11 @@ public class ByteLayoutMultiChildAttribute : Attribute
 public class ByteLayoutVariableChildAttribute : Attribute
 {
     /// <summary>
+    /// Method definition for <see cref="ByteLayoutVariableChildAttribute.SpecialiseWith"/>
+    /// </summary>
+    public delegate Type? SpecialisedType();
+
+    /// <summary>
     /// Name of a method on this container class
     /// that will give the number of times the child is
     /// repeated. For a fixed number of repeats, see <see cref="ByteLayoutMultiChildAttribute"/>.
@@ -130,6 +135,19 @@ public class ByteLayoutVariableChildAttribute : Attribute
     /// This is NOT the bit or byte offset.
     /// </summary>
     public int Order { get; set; }
+
+    /// <summary>
+    /// [Optional] Name of a function method on this type, that can give
+    /// a specialised version of this class.
+    /// <p/>
+    /// The named method should be a public instance method
+    /// that matches <see cref="SpecialisedType"/>
+    /// <p/>
+    /// The specialise method will be run after the base type has
+    /// been populated, and if it returns <c>null</c>, the base type
+    /// will be used.
+    /// </summary>
+    public string? SpecialiseWith { get; set; }
 
     /// <summary>
     /// Represents a subset of byte field data.

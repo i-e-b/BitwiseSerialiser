@@ -56,14 +56,24 @@ public static class TypeDescriber
 
         if (obj is IEnumerable list && list.GetType() != typeof(char))
         {
+            var listType = list.GetType();
+            var arrayType = listType.GetElementType() ?? listType.GenericTypeArguments.FirstOrDefault();
             var idxItr = 0;
             foreach (var item in list)
             {
                 sb.AppendLine();
                 sb.Append(Indent(depth));
                 sb.Append($"{name}[{idxItr++}] ->");
+
+                // If this is not exactly the container type, write the type name out
+                if (item.GetType() != arrayType)
+                {
+                    sb.Append(" ");
+                    sb.Append(NameForType(item.GetType()));
+                }
+
                 sb.AppendLine();
-                DescribeTypeRecursive(item, sb, depth, name);
+                DescribeTypeRecursive(item, sb, depth + 1, name);
             }
 
             return;

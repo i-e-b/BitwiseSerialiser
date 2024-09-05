@@ -356,7 +356,7 @@ EndMarker: 0x55AA (21930)
 
         var src = new NullTerminatedStructure
         {
-            VariableArray = Encoding.UTF8.GetBytes("Hello, world!") // No '\0' here
+            VariableArray = "Hello, world!"u8.ToArray() // No '\0' here
         };
         
         var actual = ByteSerialiser.ToBytes(src);
@@ -368,7 +368,7 @@ EndMarker: 0x55AA (21930)
         Assert.That(ok, Is.True);
         
         Assert.That(dst.Header, Is.EqualTo(0x1234), "1");
-        Assert.That(dst.VariableArray, Is.EqualTo(Encoding.UTF8.GetBytes("Hello, world!\0")).AsCollection, "2"); // But the '\0' is in the result
+        Assert.That(dst.VariableArray, Is.EqualTo("Hello, world!\0"u8.ToArray()).AsCollection, "2"); // But the '\0' is in the result
         Assert.That(dst.Footer, Is.EqualTo(0x5678), "3");
     }
 
@@ -405,8 +405,105 @@ EndMarker: 0x55AA (21930)
         Console.WriteLine(TypeDescriber.Describe(dst));
     }
 
+    [Test]
+    public void can_specialise_array_type_when_deserialising()
+    {
+        var input1 = new byte[] {
+            0x03, // 3 tables
+            0x01, 0x01, // type '2' key
+            0x01, 0x02, 0x03, 0x04, 0x05, // 1x five bytes of variable type
+            0x06, 0x07, 0x08, 0x09, 0x0A, // 2x five bytes of variable type
+            0x0B, 0x0C, 0x0D, 0x0E, 0x0F, // 3x five bytes of variable type
+        };
+
+        var ok = ByteSerialiser.FromBytes<ParentWithGenericChild>(input1, out var output1);
+        Assert.That(ok, Is.True, "should pass validation");
+
+        Assert.That(output1.NumTables, Is.EqualTo(0x03), "table count");
+        Assert.That(output1.Key1, Is.EqualTo(0x01), "key 1");
+        Assert.That(output1.Key2, Is.EqualTo(0x01), "key 2");
+
+        Assert.That(output1.GenericSubTables.Count, Is.EqualTo(3), "table count");
+
+        var c1 = output1.GenericSubTables[0] as Option1Child;
+        Assert.That(c1.FiveBytes, Is.EqualTo(new byte[]{0x01, 0x02, 0x03, 0x04, 0x05}).AsCollection, "row 1");
+
+        var c2 = output1.GenericSubTables[1] as Option1Child;
+        Assert.That(c2.FiveBytes, Is.EqualTo(new byte[]{0x01, 0x02, 0x03, 0x04, 0x05}).AsCollection, "row 2");
+
+        var c3 = output1.GenericSubTables[2] as Option1Child;
+        Assert.That(c3.FiveBytes, Is.EqualTo(new byte[]{0x01, 0x02, 0x03, 0x04, 0x05}).AsCollection, "row 3");
+
+        Assert.Inconclusive($"Need to test {nameof(ParentWithGenericChild)}");
+    }
+
+
+    // TODO: Add an 'Offsets' source to ByteLayoutMultiChild. Note: we need a way to say where the offset is from
+    //       [ByteLayoutMultiChild(order: 4, OffsetsFromStart = nameof(TableOffsets))] // offsets are from the start of the parent
+    //       [ByteLayoutMultiChild(order: 4, OffsetsFromHere = nameof(TableOffsets))] // offsets are from the end of previous field
+    //       [ByteLayoutMultiChild(order: 4, OffsetsInAllData = nameof(TableOffsets))] // offsets are from the start of the supplied data (entire file)
+    //       public GeneralEncodingTable[]? EncodingTables;
+
     private static string FixNewLines(string result) => result.Replace("\r", "");
 }
+
+[ByteLayout]
+public class ParentWithGenericChild
+{
+    /// <summary> Count of entries </summary>
+    [BigEndian(bytes: 1, order: 0)]
+    public byte NumTables;
+
+    /// <summary> Partial key </summary>
+    [BigEndian(bytes: 1, order: 1)]
+    public byte Key1;
+
+    /// <summary> Partial key </summary>
+    [BigEndian(bytes: 1, order: 2)]
+    public byte Key2;
+
+    /// <summary>
+    /// Byte offset from beginning of table to the sub-table for this encoding.
+    /// </summary>
+    [ByteLayoutVariableChild(nameof(CountHowMany), order: 3, SpecialiseWith = nameof(TableSpecialise))]
+    public BaseGenericChild[] GenericSubTables = [];
+
+    public int CountHowMany() => NumTables;
+
+    public Type TableSpecialise()
+    {
+        var realKey = Key1 + Key2;
+        return realKey switch
+        {
+            2 => typeof(Option1Child),
+            3 => typeof(Option2Child),
+            _ => throw new Exception("Unmapped child") // this is fine if we must handle all variants
+        };
+    }
+}
+
+/// <summary>
+/// This can be empty if there is nothing shared between options
+/// </summary>
+[ByteLayout]
+public class BaseGenericChild { }
+
+[ByteLayout]
+public class Option1Child : BaseGenericChild {
+
+    [ByteString(bytes: 5, order: 1)]
+    public byte[] FiveBytes = [];
+}
+
+[ByteLayout]
+public class Option2Child : BaseGenericChild
+{
+    [ByteString(bytes: 7, order: 1)]
+    public byte[] SevenBytes = [];
+}
+
+
+
 
 [ByteLayout(SpecialiseWith = nameof(TableSpecialise))]
 public class GenericParent
